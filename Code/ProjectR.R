@@ -4,6 +4,8 @@ install.packages('ggthemes')
 install.packages("wesanderson")
 install.packages("ggprel")
 install.packages("kableExtra")
+install.packages("ghit")
+
 
 #Importing the libraries 
 library(ggplot2)
@@ -20,6 +22,9 @@ library(ggfortify)
 library(ggrepel)
 library(kableExtra)
 library(gridExtra)
+library(pdftools)
+library(tidyverse)
+
 
 #CLEANING AND WRANGLING
 
@@ -39,7 +44,7 @@ df_uber$Date.Time <- as.POSIXct(df_uber$Date.Time, format = "%m/%d/%Y %H:%M:%S")
 df_uber$Date.Time <- ymd_hms(df_uber$Date.Time)
 
 #Using lubridate package and further massaging the data and time column and creating factors of time to prepare data for analyis
-df_uber <- df_uber %>% mutate(year = year(Date.Time), 
+df_uber <- df_uber %>% mutate(Date = date(Date.Time), year = year(Date.Time),
                     month = month(Date.Time), 
                     day = day(Date.Time),
                     hour = hour(Date.Time),
@@ -47,16 +52,19 @@ df_uber <- df_uber %>% mutate(year = year(Date.Time),
                     second = second(Date.Time))
 
 #Dropping column 10, since it only has zeroes
-df_uber <-select(df_uber,-c(10))
+df_uber <-select(df_uber,-c(11))
 
 #Making sure we dont get scientic numbers in visulas
 options(scipen =999)
+
+
 
 #Getting the count of trips by month in nyc
 month_uber <- df_uber %>%
   group_by(month) %>%
   summarize(Count = n()) %>%
   arrange(desc(Count))
+head(month_uber)
 
 #Digging further deep and now analyzing the pickuptrips at Hour level
 hour_uber <- df_uber %>%
@@ -76,6 +84,8 @@ hourmonth_uber <- df_uber %>%
   summarize(Total = n()) %>%
   arrange(desc(Total))
 
+head(hourmonth_uber)
+tail(hourmonth_uber)
 #Using case when to change the month numbers to month names
 hourmonth_uber <- hourmonth_uber %>%
   mutate(`month` = str_trim(`month`)) %>% 
@@ -90,7 +100,7 @@ ggplot(hourmonth_uber, aes(x=hour, y=Total, fill = month)) +
   ggtitle("Trip_Count by Hour and Month") 
 
 #Using Lubridate to get day names and then mutating them.
-df_uber <- df_uber %>% mutate(wday = wday(Date.Time, label = TRUE))
+df_uber <- df_uber %>% mutate(wday = weekdays(Date.Time))
 
 
 #Getting trip count by weekday and month
@@ -141,6 +151,7 @@ month_lyft <- lyft %>%
   group_by(month) %>%
   summarize(Count = n()) %>%
   arrange(desc(Count))
+head(month_lyft)
 
 #Using case when to change the month numbers to month names
 month_lyft <- month_lyft %>%
@@ -159,6 +170,7 @@ month_uber <- month_uber %>%
 month_lyft <- month_lyft %>%
   mutate(Type = "Lyft")
 
+head(month_uber)
 #Making a column in Uber
 
 month_uber <- month_uber %>%
@@ -209,4 +221,91 @@ h2
 grid <- grid.arrange(h1,h2,ncol=2, nrow=1)
 
 grid
+
+#Wrangling of weather data
+listofdfs <- list()
+for (i in c <- list("aprilw.pdf","mayw.pdf","junew.pdf","julyw.pdf","augustw.pdf","septemberw.pdf")) {
+  
+  PDF <- pdf_text(i) %>%
+    readr::read_lines()
+  PDF
+
+  PDF.weather <-PDF[-c(1:3,36:46)] # remove lines
+  PDF.weather
+
+  all_stat_lines <- PDF.weather[3:32] %>%
+    str_squish() %>%
+    strsplit(split = " ")# remove empty spaces
+
+  col_lines <- c("Date", "Maximum", "Minimum", "Average", "Departure","HDD", "CDD","Precipitation", "NewSnow", "SnowDepth") # create your variable names
+
+  df <- plyr::ldply(all_stat_lines) #create a data frame
+
+  colnames(df) <- col_lines
+  final_df <- as_tibble(df)
+  listofdfs[[i]] <- final_df 
+}
+
+weatherdf <- bind_rows(listofdfs)
+weatherdf$Date <- as.Date(weatherdf$Date)
+weatherdf$Maximum <- as.numeric(weatherdf$Maximum)
+weatherdf$Minimum <- as.numeric(weatherdf$Minimum)
+weatherdf$Average <- as.numeric(weatherdf$Average)
+weatherdf$Departure <- as.numeric(weatherdf$Departure)
+weatherdf$HDD <- as.numeric(weatherdf$HDD)
+weatherdf$CDD <- as.numeric(weatherdf$CDD)
+weatherdf$Precipitation <- as.numeric(weatherdf$Precipitation)
+weatherdf$NewSnow <- as.numeric(weatherdf$NewSnow)
+weatherdf$SnowDepth  <- as.numeric(weatherdf$SnowDepth )
+
+#Removing NAS
+weatherdf[is.na(weatherdf)] <- 0
+
+weatherdf <- weatherdf %>% mutate(Date = date(Date), year = year(Date),
+                              month = month(Date), 
+                              day = day(Date))
+
+#Getting the count of trips by day in nyc
+daymonth_uber <- df_uber %>%
+  group_by(day,month) %>%
+  summarize(Count = n()) %>%
+  arrange(desc(Count))
+
+
+bigdf3 <- left_join(daymonth_uber, weatherdf, by = c("month" = "month","day" = "day"))
+
+bigdf3  <- bigdf3  %>%
+  mutate(`month` = str_trim(`month`)) %>% 
+  mutate(month = case_when(`month` == "4" ~ 'April',
+                           `month` == "5" ~ 'May',
+                           `month` == "6" ~ 'June',
+                           `month` == "7" ~ 'July',`month` == "8" ~ 'August',`month` == "9" ~ 'September'))
+
+
+ggplot(bigdf3, aes(Average, Count, color=month))+geom_line()+geom_point()+ggtitle("Trip Count Weather Effect") +
+  geom_smooth(color='black')
+
+
+ggplot(data = bigdf3, aes(x = Maximum, y =Count, color = month)) + 
+  geom_point()+geom_boxplot()
+
+
+
+
+sepdfw  <- filter(bigdf3, month == "September")
+
+ggplot(sepdfw, aes(Average, Count))+geom_line()+geom_point(color='orange')+ggtitle("September:Trip Count Daily Average Temperature Effect") +
+  geom_smooth(color='red')
+
+ggplot(sepdfw, aes(Precipitation, Count))+geom_line(color="blue")+geom_point(color="orange")+ggtitle("September:Trip Count Precitipation Effect")+
+  geom_text(aes(label=day),hjust=0.03, vjust=0.7)
+
+
+aprildfw  <- filter(bigdf3, month == "April")
+ggplot(aprildfw, aes(Precipitation, Count))+geom_line(color="red")+geom_point(color="yellow")+ggtitle("April:Trip Count Precitipation Effect")+
+  geom_text(aes(label=day),hjust=0.03, vjust=0.7)
+
+ggplot(aprildfw, aes(Average, Count))+geom_line()+geom_point(color='orange')+ggtitle("April:Trip Count Daily Average Temperature Effect") +
+  geom_smooth(color='red')
+
 
